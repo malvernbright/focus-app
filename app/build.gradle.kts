@@ -61,6 +61,7 @@ dependencies {
     // Room (SQLite)
     implementation(libs.room.runtime)
     implementation(libs.room.ktx)
+    implementation(libs.animation)
     ksp(libs.room.compiler)
 
     // WorkManager for background notifications

@@ -1,5 +1,10 @@
 package com.malvernbright.focusapp.ui
 
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
@@ -8,17 +13,18 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
-import androidx.lifecycle.viewmodel.compose.viewModel
-import com.malvernbright.focusapp.data.TaskEntity
-import java.util.Locale
-import java.text.DateFormat
-import androidx.compose.animation.core.animateFloatAsState
 import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
+import com.malvernbright.focusapp.data.ProjectEntity
+import com.malvernbright.focusapp.data.TaskEntity
 import kotlinx.coroutines.launch
+import java.text.DateFormat
+import java.util.Locale
 
 @Composable
 fun TimerScreen(
@@ -70,7 +76,7 @@ fun TimerScreen(
                 selectedProjectId = null
             }) { Text("Clear selection") }
         }
-        if (showZeroWarning) {
+        AnimatedVisibility(visible = showZeroWarning, enter = expandVertically(), exit = shrinkVertically()) {
             Text("Minutes must be greater than 0", color = MaterialTheme.colorScheme.error)
         }
         Spacer(Modifier.height(12.dp))
@@ -80,7 +86,7 @@ fun TimerScreen(
         OutlinedButton(onClick = { expandTasks = !expandTasks }) { Text(selectedTaskId?.let { id ->
             tasks.firstOrNull { it.id == id }?.title ?: "Select task (optional)"
         } ?: "Select task (optional)") }
-        if (expandTasks) {
+        AnimatedVisibility(visible = expandTasks, enter = expandVertically(), exit = shrinkVertically()) {
             Surface(Modifier.fillMaxWidth().padding(8.dp)) {
                 LazyColumn {
                     items(tasks.filter { !it.isCompleted }) { task ->
@@ -105,7 +111,7 @@ fun TimerScreen(
         OutlinedButton(onClick = { expandProjects = !expandProjects }) { Text(selectedProjectId?.let { id ->
             projects.firstOrNull { it.id == id }?.name ?: "Select project (optional)"
         } ?: "Select project (optional)") }
-        if (expandProjects) {
+        AnimatedVisibility(visible = expandProjects, enter = expandVertically(), exit = shrinkVertically()) {
             Surface(Modifier.fillMaxWidth().padding(8.dp)) {
                 LazyColumn {
                     items(projects.filter { !it.isCompleted }) { p ->
@@ -138,23 +144,38 @@ fun TimerScreen(
                 modifier = Modifier.width(150.dp)
             )
         }
-        Spacer(Modifier.height(8.dp))
+        Spacer(Modifier.height(16.dp))
 
         val progress = if (total > 0) 1f - (remaining.toFloat() / total.toFloat()) else 0f
         val animProgress by animateFloatAsState(targetValue = progress, label = "progress")
-        LinearProgressIndicator(progress = { animProgress }, modifier = Modifier.fillMaxWidth().padding(horizontal = 24.dp))
-        Spacer(Modifier.height(8.dp))
-        Text(
-            text = formatMillis(remaining),
-            modifier = Modifier.fillMaxWidth(),
-            textAlign = TextAlign.Center
+        val timeColor by animateColorAsState(
+            targetValue = if (remaining <= 60_000L && total > 0) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
+            label = "timeColor"
         )
-        Spacer(Modifier.height(12.dp))
+
+        // Circular countdown with time in the center
+        Box(modifier = Modifier.size(220.dp), contentAlignment = Alignment.Center) {
+            CircularProgressIndicator(
+                progress = { animProgress },
+                strokeWidth = 12.dp,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+                strokeCap = StrokeCap.Round,
+            )
+            Text(
+                text = formatMillis(remaining),
+                modifier = Modifier.align(Alignment.Center),
+                style = MaterialTheme.typography.headlineLarge,
+                color = timeColor,
+                textAlign = TextAlign.Center
+            )
+        }
+
+        Spacer(Modifier.height(16.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Button(onClick = {
                 if (selectedMinutes <= 0) return@Button
                 vm.start(selectedMinutes, selectedTaskId)
-            }) { Text("Start") }
+            }, enabled = selectedMinutes > 0) { Text("Start") }
             OutlinedButton(onClick = { if (isRunning) vm.pause() else vm.resume() }) { Text(if (isRunning) "Pause" else "Resume") }
             TextButton(onClick = { vm.cancel() }) { Text("Cancel") }
         }
@@ -247,6 +268,10 @@ private fun TaskDialog(
     var alarm by remember { mutableStateOf(initial?.alarmOnCompletion ?: true) }
     var description by remember { mutableStateOf(TextFieldValue(initial?.description ?: "")) }
 
+    val projectsVm: ProjectsViewModel = viewModel()
+    val projects by projectsVm.projects.collectAsState()
+    var projectMenuExpanded by remember { mutableStateOf(false) }
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = { Text(if (initial == null) "New Task" else "Edit Task") },
@@ -255,11 +280,23 @@ private fun TaskDialog(
                 OutlinedTextField(value = title, onValueChange = { title = it }, label = { Text("Title") })
                 OutlinedTextField(value = minutes, onValueChange = { if (it.all { ch -> ch.isDigit() }) minutes = it }, label = { Text("Expected minutes") })
                 OutlinedTextField(value = description, onValueChange = { description = it }, label = { Text("Description") }, minLines = 2)
+                // Project picker
+                Box {
+                    OutlinedButton(onClick = { projectMenuExpanded = true }) {
+                        val label = projectId?.let { id -> projects.firstOrNull { it.id == id }?.name } ?: "No project"
+                        Text("Project: $label")
+                    }
+                    DropdownMenu(expanded = projectMenuExpanded, onDismissRequest = { projectMenuExpanded = false }) {
+                        DropdownMenuItem(text = { Text("No project") }, onClick = { projectId = null; projectMenuExpanded = false })
+                        projects.forEach { p: ProjectEntity ->
+                            DropdownMenuItem(text = { Text(p.name) }, onClick = { projectId = p.id; projectMenuExpanded = false })
+                        }
+                    }
+                }
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Checkbox(checked = alarm, onCheckedChange = { alarm = it })
                     Text("Alarm on completion")
                 }
-                // Project selection could be added here; keeping simple for now
             }
         },
         confirmButton = {
